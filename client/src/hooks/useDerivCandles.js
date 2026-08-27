@@ -18,7 +18,7 @@ export default function useDerivCandles({
   symbol,
   granularity,
   enabled = true,
-  count = 150,
+  count = 1000, // <--- Increased default from 150 to 1000
   onStart,
   onHistory,
   onTick,

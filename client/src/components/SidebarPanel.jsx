@@ -1,11 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { TrendingUp, Bell, CheckSquare, Plus, X, Shield, ChevronLeft, ChevronRight } from 'lucide-react';
 
 export default function SidebarPanel({
     isCollapsed = false,
     onToggle = () => { },
     symbols = [],
-    watchlist = [],
+    watchlist = [], // Single source of truth containing live quotes from parent WS
     selectedSymbol = null,
     onSelectSymbol = () => { },
     onAddSymbol = () => { },
@@ -14,30 +14,16 @@ export default function SidebarPanel({
     error = null,
 }) {
     const [rightTab, setRightTab] = useState('watchlist');
-    const STORAGE_KEY = 'traders_edge_watchlist';
 
-    const [watchlistSymbols, setWatchlistSymbols] = useState(() => {
-        try {
-            const saved = localStorage.getItem(STORAGE_KEY);
-            if (saved) return JSON.parse(saved);
-        } catch (e) {
-            // ignore
-        }
-        return watchlist;
-    });
+    const availableSymbols = symbols.filter(
+        (item) => !watchlist.some((watched) => watched && watched.symbol === item.symbol)
+    );
 
-    useEffect(() => {
-        try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(watchlistSymbols));
-        } catch (e) {
-            // ignore quota errors
-        }
-    }, [watchlistSymbols]);
-
-    const availableSymbols = symbols.filter((item) => !watchlistSymbols.some((watched) => watched.symbol === item.symbol));
     const formatPrice = (price, pipSize) => {
         if (!Number.isFinite(price)) return 'Loading…';
-        const decimals = Number.isFinite(Number(pipSize)) ? Math.max(0, Math.min(10, Math.round(-Math.log10(Number(pipSize))))) : undefined;
+        const decimals = Number.isFinite(Number(pipSize))
+            ? Math.max(0, Math.min(10, Math.round(-Math.log10(Number(pipSize)))))
+            : undefined;
         return decimals === undefined ? String(price) : price.toFixed(decimals);
     };
 
@@ -52,21 +38,6 @@ export default function SidebarPanel({
         setChecklist((prev) =>
             prev.map((item) => (item.id === id ? { ...item, checked: !item.checked } : item))
         );
-    };
-
-    const handleAddSymbol = (symbol) => {
-        const item = symbols.find((s) => s.symbol === symbol);
-        if (!item) return;
-        setWatchlistSymbols((prev) => {
-            if (prev.some((p) => p.symbol === symbol)) return prev;
-            return [...prev, item];
-        });
-        onAddSymbol(symbol);
-    };
-
-    const handleRemoveSymbol = (symbol) => {
-        setWatchlistSymbols((prev) => prev.filter((p) => p.symbol !== symbol));
-        onRemoveSymbol(symbol);
     };
 
     // Collapsed Rail View
@@ -97,7 +68,7 @@ export default function SidebarPanel({
                                     key={tab.id}
                                     onClick={() => {
                                         setRightTab(tab.id);
-                                        onToggle(); // Auto-expand when tab is clicked in rail mode
+                                        onToggle();
                                     }}
                                     title={tab.label}
                                     className={`relative rounded-lg p-2 transition ${isActive
@@ -121,7 +92,7 @@ export default function SidebarPanel({
     // Expanded View
     return (
         <div className="flex h-full w-full flex-col overflow-hidden rounded-2xl border border-[#29251B] bg-[#0D0D0D]">
-            {/* Header Tabs & Toggle Button */}
+            {/* Header Tabs */}
             <div className="flex h-10 items-center justify-between border-b border-[#29251B] px-2">
                 <div className="flex flex-1 items-center gap-1 overflow-x-auto no-scrollbar">
                     {[
@@ -169,26 +140,43 @@ export default function SidebarPanel({
                                 disabled={!availableSymbols.length}
                                 onChange={(event) => {
                                     const val = event.target.value;
-                                    if (val) handleAddSymbol(val);
+                                    if (val) onAddSymbol(val);
                                     event.target.value = '';
                                 }}
                                 className="min-w-0 flex-1 rounded-lg border border-[#29251B] bg-[#151515] px-2 py-1.5 text-[11px] text-[#F5F5F0] focus:border-[#D4AF37] focus:outline-none disabled:opacity-60"
                             >
                                 <option value="">{status === 'loading' ? 'Loading Deriv markets…' : 'Add a live market…'}</option>
-                                {availableSymbols.map((item) => <option key={item.symbol} value={item.symbol}>{item.displayName} ({item.symbol})</option>)}
+                                {availableSymbols.map((item) => (
+                                    <option key={item.symbol} value={item.symbol}>
+                                        {item.displayName || item.name || item.symbol} ({item.symbol})
+                                    </option>
+                                ))}
                             </select>
                         </div>
+
                         {error && <p className="rounded-lg border border-red-500/30 bg-red-500/5 p-2 text-[11px] text-red-400">{error}</p>}
-                        {!error && !watchlist.length && status !== 'loading' && <p className="rounded-lg border border-[#29251B] bg-[#151515] p-3 text-xs text-[#A8A8A0]">Add a supported Deriv market to begin watching live prices.</p>}
-                        {watchlistSymbols.map((item) => {
-                            const isSelected = selectedSymbol === item.symbol;
-                            const price = item.quote?.price;
-                            const percentage = item.quote?.percentage;
+
+                        {!error && !watchlist.length && status !== 'loading' && (
+                            <p className="rounded-lg border border-[#29251B] bg-[#151515] p-3 text-xs text-[#A8A8A0]">
+                                Add a supported Deriv market to begin watching live prices.
+                            </p>
+                        )}
+
+                        {watchlist.map((item) => {
+                            if (!item || typeof item !== 'object') return null;
+
+                            const itemSymbol = item.symbol;
+                            const isSelected = selectedSymbol === itemSymbol;
+
+                            // Check both potential quote locations safely
+                            const rawPrice = item.quote?.price ?? item.price;
+                            const percentage = item.quote?.percentage ?? item.percentage;
                             const isUp = percentage === null || percentage === undefined ? true : percentage >= 0;
+
                             return (
                                 <div
-                                    key={item.symbol}
-                                    onClick={() => onSelectSymbol(item.symbol)}
+                                    key={itemSymbol}
+                                    onClick={() => onSelectSymbol(itemSymbol)}
                                     className={`flex cursor-pointer items-center justify-between gap-2 rounded-xl border px-2 py-1.5 text-xs transition ${isSelected
                                         ? 'border-[#D4AF37] bg-[#1C180E] shadow-[0_0_10px_rgba(212,175,55,0.05)]'
                                         : 'border-[#29251B] bg-[#151515] hover:border-[#D4AF37]/50'
@@ -196,19 +184,33 @@ export default function SidebarPanel({
                                 >
                                     <div className="min-w-0 flex-1">
                                         <div className={`truncate font-semibold ${isSelected ? 'text-[#D4AF37]' : 'text-[#F5F5F0]'}`}>
-                                            {item.displayName}
+                                            {item.displayName || item.name || itemSymbol}
                                         </div>
-                                        <div className="text-[10px] text-[#A8A8A0]">{item.symbol} · {item.market}</div>
+                                        <div className="text-[10px] text-[#A8A8A0]">
+                                            {itemSymbol} {item.market ? `· ${item.market}` : ''}
+                                        </div>
                                     </div>
                                     <div className="text-right shrink-0">
                                         <div className="font-mono text-xs font-medium text-[#F5F5F0]">
-                                            {item.quote?.error ? 'Unavailable' : formatPrice(price, item.pipSize)}
+                                            {item.quote?.error ? 'Unavailable' : formatPrice(rawPrice, item.pipSize)}
                                         </div>
                                         <div className={`text-[10px] font-bold ${isUp ? 'text-[#10B981]' : 'text-red-400'}`}>
-                                            {Number.isFinite(percentage) ? `${isUp ? '+' : ''}${percentage.toFixed(3)}% tick` : 'Awaiting tick'}
+                                            {Number.isFinite(percentage)
+                                                ? `${isUp ? '+' : ''}${percentage.toFixed(3)}% tick`
+                                                : Number.isFinite(rawPrice) ? 'Live' : 'Awaiting tick'}
                                         </div>
                                     </div>
-                                    <button onClick={(event) => { event.stopPropagation(); handleRemoveSymbol(item.symbol); }} aria-label={`Remove ${item.displayName} from watchlist`} title="Remove from watchlist" className="rounded p-1 text-[#6F6F68] hover:bg-red-500/10 hover:text-red-400"><X className="h-3.5 w-3.5" /></button>
+                                    <button
+                                        onClick={(event) => {
+                                            event.stopPropagation();
+                                            onRemoveSymbol(itemSymbol);
+                                        }}
+                                        aria-label={`Remove ${item.displayName || itemSymbol} from watchlist`}
+                                        title="Remove from watchlist"
+                                        className="rounded p-1 text-[#6F6F68] hover:bg-red-500/10 hover:text-red-400"
+                                    >
+                                        <X className="h-3.5 w-3.5" />
+                                    </button>
                                 </div>
                             );
                         })}
