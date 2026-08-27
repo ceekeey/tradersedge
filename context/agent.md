@@ -1,856 +1,105 @@
-AGENT.md — Traders Edge Development Rules
+# AGENT.md — Traders Edge Development Rules & Execution Guidelines
 
-Project Goal
+## 🎯 Project Goal
 
-Build Traders Edge as a reliable personal trading operating system.
+Build **Traders Edge** as a reliable, high-performance, dark-themed personal trading operating system.
 
-The implementation must prioritize:
+The implementation MUST prioritize:
 
-Real market data
+- Real market data (Deriv API WebSocket integration)
+- Accurate API contracts & payload schemas
+- Stable, leak-free chart rendering
+- Clean, modular component architecture
+- Incremental milestone validation
+- ZERO fake, guessed, or silently fallback trading data
 
-Correct API integration
+---
 
-Stable chart rendering
+## 🛑 NON-DESTRUCTIVE REFACTORING RULES (STRICT)
 
-Clean architecture
+1. **DO NOT TOUCH OR REWRITE EXISTING WORKING LOGIC**
+   - Never delete, rewrite, or alter existing WebSocket event handlers (`onmessage`, `onopen`, `onclose`), active tick subscriptions, price calculations, order execution logic, or data-fetching hooks unless directly requested to fix a verified bug within that specific function.
+   - Layout, UI, and structural refactoring MUST be non-destructive. Wrap changes around existing structures using Tailwind wrappers or custom design utility classes.
 
-Incremental milestones
+2. **ISOLATED AND TARGETED EDITS**
+   - Make the smallest possible change to achieve a task.
+   - Do NOT rewrite an entire component, file, or sibling module just to apply minor styling changes or fix an isolated issue.
 
-No fake or guessed trading data
+3. **PROGRESS & CRASH RECOVERY LOGGING (`progress.md`)**
+   - Before executing complex tasks or milestone shifts, inspect the codebase and update/create `progress.md` in the project root/context directory.
+   - Document: Active Milestone, Current Completed Tasks, Modified Files, Unresolved Errors, and the **Exact Next Step**.
+   - If an error, API rate limit, or context timeout occurs, resume directly by reading `progress.md`.
 
-Core Development Rules
+---
 
-1. Work milestone-by-milestone
+## 🎨 DESIGN SYSTEM & UI COLOR SCHEME (`index.css` & Tokens)
 
-Never implement several major trading features at once.
+Maintain the calm, technical dark UI visual language. Use CSS Variables / Design System Utility Classes from `index.css`:
 
-The current roadmap is:
+### Design System CSS Variables & Utility Mapping
 
-📈 Milestone 1 — One real Deriv chart
+- **App Background (`--app-bg: #070707`):** Utility `.bg-app-bg` or Tailwind `bg-[#070707]`
+- **Primary Surface (`--surface: #0d0d0d`):** Utility `.bg-surface` or Tailwind `bg-[#0d0d0d]`
+- **Elevated Surface (`--elevated-surface: #151515`):** Utility `.bg-elevated` / `.card-surface` or Tailwind `bg-[#151515]`
+- **Primary Border (`--border: #29251b`):** Utility `.border-primary` / `.muted-divider` or Tailwind `border-[#29251b]`
+- **Primary Gold (`--gold: #d4af37`):** Utility `.text-gold`, `.bg-gold`, `.btn-primary`, or Tailwind `text-[#d4af37]` / `bg-[#d4af37]`
+- **Light Gold Hover (`--gold-hover: #e5c76b`):** Utility `.text-gold-hover:hover`, `.bg-gold-hover:hover`, `.btn-primary:hover`
+- **Primary Text (`--text-primary: #f5f5f0`):** Utility `.text-primary` or Tailwind `text-[#f5f5f0]`
+- **Muted Text (`--text-muted: #6f6f68`):** Utility `.text-muted` or Tailwind `text-[#6f6f68]`
+- **Positive / Bullish / Win:** `#10B981` (`text-[#10B981]`, `bg-[#10B981]`) / `emerald-400`
+- **Negative / Bearish / Loss:** `#EF4444` (`text-red-400`, `bg-red-500`) / `rose-400`
 
-🔎 Milestone 2 — Dynamic symbols
+### Focus & Utility Helpers
 
-🔴 Milestone 3 — Live price streaming
+- Use `.focus-gold` for keyboard navigation focus outlines.
+- Use `.accent-dot` for gold indicator badges.
+- All UI panels should feature custom dark gold scrollbars as configured in `index.css`.
 
-⭐ Milestone 4 — Watchlist
+### Typography & Density Rules
 
-⏱️ Milestone 5 — Timeframe switching (1H/4H/etc.)
+- High-density layout: Preferred font sizes are `text-[10px]`, `text-[11px]`, and `text-xs`.
+- Monospace numbers: Numerical prices, PnL values, timestamps, and chart metrics MUST use `font-mono`.
+- Compact padding: Standard inner panel padding should range from `p-2` to `p-4` to maximize workspace area.
 
-📊 Milestone 6 — 4H/1H zone strategy tools
+---
 
-💱 Milestone 7 — Trading/order integration
+## 📈 MILESTONE ROADMAP & ACCEPTANCE CRITERIA
 
-A milestone is not complete until its acceptance criteria are verified.
+Work strictly milestone-by-milestone. Do NOT skip ahead because code compiles.
 
-Do not start the next milestone just because the code compiles.
+- [ ] **Milestone 1 — One Real Deriv Chart**
+  - Connect Deriv WS (`wss://api.derivws.com/trading/v1/options/ws/public`).
+  - Request `ticks_history` for a valid symbol (e.g., `R_100` / `1HZ100V`).
+  - Render real OHLC candles using TradingView Lightweight Charts.
+  - Chart auto-resizes via `ResizeObserver` without stretching.
 
-Milestone 1 — One Real Deriv Chart
+- [ ] **Milestone 2 — Dynamic Symbols**
+  - Fetch `active_symbols` directly from Deriv WS API.
+  - Populate dynamic symbol dropdown/search.
+  - Selecting a symbol re-renders the chart with the new market data.
 
-Objective
+- [ ] **Milestone 3 — Live Price Streaming**
+  - Subscribe to real-time tick stream (`subscribe: 1`).
+  - Update current active candle in real-time using `series.update()`.
+  - Properly clean up sockets on symbol change or component unmount.
 
-Get ONE real Deriv market displaying real historical candlestick data in TradingView Lightweight Charts.
+- [ ] **Milestone 4 — Watchlist**
+  - Build market watchlist sidebar using real WebSocket feeds.
+  - Support symbol name, price ticker, dynamic change %, and selection.
 
-Flow:
+- [ ] **Milestone 5 — Timeframe Switching (1M, 15M, 1H, 4H, 1D)**
+  - Map UI timeframes to Deriv granularity in seconds (`1M`=60, `15M`=900, `1H`=3600, `4H`=14400, `1D`=86400).
+  - Re-subscribe candle feeds smoothly when switching timeframes without duplicate sockets.
+  - Retain execution price overlay lines (Entry/Exit) across timeframe switches.
 
-Deriv WebSocket
-↓
-Valid Deriv symbol
-↓
-Historical candle request
-↓
-Real OHLC data
-↓
-Lightweight Charts
-↓
-Visible candlestick chart
+- [ ] **Milestone 6 — 4H/1H Zone Strategy Tools**
+  - Implement strategy overlays, demand/supply zones, and risk-reward calculation tools.
 
-Rules
+- [ ] **Milestone 7 — Order Execution & Account Integration**
+  - Deriv OAuth account authentication, balance display, and safe contract execution.
 
-Use the currently documented Deriv API.
+---
 
-Use a real, verified Deriv symbol.
+## 🏗️ ARCHITECTURE & DECOUPLING RULES
 
-Never invent symbol identifiers.
-
-Never use fake candle data.
-
-Never use hard-coded fake prices.
-
-Do not make active_symbols dynamic discovery a dependency until the basic chart pipeline is proven.
-
-Preserve the existing dark/gold Traders Edge visual language.
-
-Keep ChartSection.jsx focused on chart responsibilities.
-
-Acceptance Criteria
-
-Milestone 1 is complete only when:
-
-Deriv WebSocket connects.
-
-A valid real symbol is confirmed.
-
-ticks_history successfully returns candles.
-
-OHLC data is converted correctly.
-
-Lightweight Charts renders the candles.
-
-The chart is responsive.
-
-Errors are visible and actionable.
-
-No fake market data is used.
-
-Milestone 2 — Dynamic Symbols
-
-Objective
-
-Retrieve real symbols directly from Deriv and allow the user to select them.
-
-Flow:
-
-Deriv
-↓
-active_symbols
-↓
-Normalize response
-↓
-Symbol list
-↓
-Dropdown/search
-↓
-Selected symbol
-↓
-Chart
-
-Rules
-
-Use the current official Deriv API documentation.
-
-Do not rely on outdated examples.
-
-Do not guess response fields.
-
-Log the raw API response when debugging.
-
-Do not filter symbols until the actual response schema is understood.
-
-Never replace missing API data with fake symbols.
-
-The chart must use the exact symbol identifier returned by Deriv.
-
-Example concept:
-
-{
-symbol: "...",
-name: "..."
-}
-
-The exact fields must come from the current API response.
-
-Acceptance Criteria
-
-Real Deriv symbols populate the UI.
-
-Symbol display names are correct.
-
-Symbol identifiers are correct.
-
-Selecting a symbol loads its real chart.
-
-Invalid symbols are handled gracefully.
-
-Milestone 3 — Live Price Streaming
-
-Objective
-
-Stream real-time prices and update the active candle.
-
-Flow:
-
-Deriv tick stream
-↓
-Current price
-↓
-Current 1H candle
-↓
-series.update()
-
-Rules
-
-Use real Deriv tick data.
-
-Do not poll unnecessarily when WebSocket streaming is available.
-
-Do not recreate the entire chart for every tick.
-
-Use series.update() for live candle updates.
-
-Correctly calculate the candle bucket from the tick timestamp.
-
-Clean up subscriptions when changing symbols or unmounting.
-
-Acceptance Criteria
-
-Current price updates in real time.
-
-Current candle updates without flickering.
-
-No duplicate subscriptions.
-
-Switching symbols does not leave stale streams running.
-
-WebSocket cleanup is reliable.
-
-Milestone 4 — Watchlist
-
-Objective
-
-Create a real watchlist powered by the same market-data layer.
-
-Each watchlist item should support:
-
-Symbol
-
-Display name
-
-Current price
-
-Price movement/change where supported
-
-Selection
-
-Loading state
-
-Error state
-
-Rules
-
-Watchlist data must come from the market-data layer.
-
-Do not duplicate WebSocket logic unnecessarily.
-
-Do not hard-code prices.
-
-Avoid creating one independent connection per symbol unless technically required.
-
-Prefer a reusable market-data service/hook.
-
-Acceptance Criteria
-
-User can add/remove supported symbols.
-
-Watchlist prices are real.
-
-Clicking an item changes the chart symbol.
-
-No stale data remains after symbol changes.
-
-Milestone 5 — Timeframe Switching
-
-Objective
-
-Support multiple chart timeframes.
-
-Initial targets:
-
-1H
-
-4H
-
-Potential future targets:
-
-5m
-
-15m
-
-30m
-
-1D
-
-Rules
-
-Use the correct Deriv candle granularity for each timeframe.
-
-Do not fabricate higher-timeframe candles unless there is a clear technical reason to aggregate them locally.
-
-Preserve chart state where practical.
-
-Changing timeframe must reload/transform data correctly.
-
-Live updates must use the selected timeframe.
-
-Acceptance Criteria
-
-1H chart works.
-
-4H chart works.
-
-Switching timeframe does not create duplicate WebSockets.
-
-Candle boundaries are correct.
-
-Live candle updates remain correct.
-
-Milestone 6 — 4H/1H Zone Strategy Tools
-
-Objective
-
-Build chart tools around the Traders Edge 4H/1H zone strategy.
-
-The strategy layer should eventually support:
-
-Higher-timeframe analysis
-
-4H zones
-
-1H zones
-
-Zone marking
-
-Zone boundaries
-
-Entry areas
-
-Risk/reward visualization
-
-Relevant price levels
-
-Strategy notes
-
-Rules
-
-Keep strategy logic separate from raw market-data logic.
-
-Do not mix Deriv API code with zone calculations.
-
-Strategy calculations must be deterministic.
-
-Never silently alter user-defined strategy rules.
-
-Do not present strategy calculations as guaranteed predictions.
-
-Keep chart overlays performant.
-
-Acceptance Criteria
-
-4H analysis can be displayed.
-
-1H analysis can be displayed.
-
-Zones can be created/edited/removed.
-
-Zones remain associated with the correct symbol/timeframe.
-
-Chart performance remains smooth.
-
-Milestone 7 — Trading / Order Integration
-
-Objective
-
-Connect the platform to actual Deriv trading functionality only after the market-data and chart layers are stable.
-
-Potential functionality:
-
-Account authentication
-
-Balance
-
-Contract/order creation
-
-Position state
-
-Order status
-
-Trade history
-
-Risk controls
-
-Rules
-
-Safety first
-
-Trading functionality must never silently submit an order.
-
-Before sending an order:
-
-Confirm the selected symbol.
-
-Confirm direction.
-
-Confirm stake/amount.
-
-Confirm contract/order parameters.
-
-Confirm account/environment.
-
-Show a clear user confirmation step where appropriate.
-
-API rules
-
-Use the current official Deriv API documentation.
-
-Never expose sensitive authentication tokens in frontend source code.
-
-Never commit secrets to Git.
-
-Never log authentication tokens.
-
-Never hard-code account credentials.
-
-Error handling
-
-Every trading request must handle:
-
-API errors
-
-Network errors
-
-Authentication errors
-
-Invalid symbols
-
-Invalid parameters
-
-Insufficient funds
-
-Timeouts
-
-Connection loss
-
-Never assume an order succeeded because the request was sent.
-
-Only treat an order as successful after receiving and validating the appropriate Deriv response.
-
-Architecture Rules
-
-Separation of responsibilities
-
-Prefer this architecture:
-
-components/
-ChartSection.jsx
-TradePanel.jsx
-SidebarPanel.jsx
-
-services/
-deriv/
-websocket.js
-marketData.js
-trading.js
-
-hooks/
-useDerivSymbols.js
-useDerivTicks.js
-useDerivCandles.js
-
-utils/
-candles.js
-symbols.js
-
-The exact folder structure may evolve.
-
-Do not create files unnecessarily.
-
-ChartSection responsibilities
-
-ChartSection should primarily handle:
-
-Chart lifecycle
-
-Chart rendering
-
-Selected market
-
-Selected timeframe
-
-Display state
-
-Chart-specific interactions
-
-It should not become a giant file containing:
-
-Authentication
-
-Trading execution
-
-Database operations
-
-Watchlist persistence
-
-Every Deriv API request
-
-Strategy calculations
-
-Move reusable API logic into appropriate services/hooks as the project grows.
-
-Deriv API Rules
-
-Official documentation first
-
-When working with Deriv:
-
-Check the current official documentation.
-
-Verify request schema.
-
-Verify response schema.
-
-Verify endpoint.
-
-Verify symbol identifiers.
-
-Test the smallest possible request.
-
-Only then integrate into React.
-
-Never assume an old Deriv API example is still correct.
-
-Debugging
-
-Always distinguish between:
-
-WebSocket connection problem
-API request problem
-API response problem
-Data transformation problem
-Chart rendering problem
-React lifecycle problem
-
-Do not fix one by hiding another.
-
-When debugging WebSockets, log:
-
-CONNECT
-REQUEST
-RAW RESPONSE
-PARSED RESPONSE
-ERROR
-CLOSE
-
-Do not only log generic:
-
-Event { isTrusted: true }
-
-React Rules
-
-Effects
-
-Keep useEffect dependencies correct.
-
-Clean up WebSockets.
-
-Prevent stale callbacks from updating state.
-
-Account for React Strict Mode during development.
-
-Never disable Strict Mode merely to hide lifecycle bugs.
-
-State
-
-Keep state minimal.
-
-Do not store values in React state if they can safely live in refs or derived values.
-
-Avoid unnecessary re-renders of the chart.
-
-Lightweight Charts Rules
-
-Use the installed TradingView Lightweight Charts package.
-
-The chart must:
-
-Resize with its container.
-
-Clean itself up on unmount.
-
-Avoid unnecessary recreation.
-
-Use candlestick series for OHLC data.
-
-Use Unix timestamps in the format expected by the installed version.
-
-Receive validated numeric OHLC values.
-
-Handle empty datasets gracefully.
-
-Never pass malformed candle objects into the series.
-
-Error Handling Rules
-
-Errors must be meaningful.
-
-Prefer:
-
-Deriv API error: InvalidSymbol — ...
-
-over:
-
-Something went wrong.
-
-For WebSocket errors, log:
-
-{
-code,
-reason,
-wasClean
-}
-
-when available.
-
-Never swallow errors silently.
-
-Never fake successful state after an error.
-
-Data Integrity Rules
-
-This is a trading application.
-
-Therefore:
-
-REAL DATA ONLY.
-
-Never:
-
-fabricate prices
-
-fabricate candles
-
-fabricate symbols
-
-fabricate balances
-
-fabricate orders
-
-fabricate positions
-
-fabricate trade results
-
-Mock data may only be used when explicitly requested for UI development and must be clearly marked as mock data.
-
-Security Rules
-
-Never put:
-
-API tokens
-
-private keys
-
-passwords
-
-secret credentials
-
-inside:
-
-React source code
-
-Git commits
-
-console logs
-
-public environment variables
-
-If an API credential is required in the browser, verify the provider's recommended authentication architecture first.
-
-Code Quality Rules
-
-Before changing code:
-
-Understand the current implementation.
-
-Identify the actual failure.
-
-Make the smallest appropriate change.
-
-Test the affected flow.
-
-Check for regressions.
-
-Explain what changed.
-
-Do not rewrite unrelated components just because a bug exists in one component.
-
-Avoid unnecessary dependencies.
-
-Reuse existing packages before adding new ones.
-
-UI / Design Rules
-
-Traders Edge should remain:
-
-Clean
-
-Focused
-
-Premium
-
-Calm
-
-Technical
-
-Minimal
-
-Existing visual language:
-
-Dark interface
-
-Gold accent
-
-Green positive state
-
-Red negative/error state
-
-Subtle borders
-
-Rounded panels
-
-Dense but readable trading UI
-
-Do not introduce random colors or unrelated design systems.
-
-Use the existing project conventions before adding new UI libraries.
-
-Agent Workflow
-
-For every task:
-
-Step 1 — Inspect
-
-Understand:
-
-Existing files
-
-Existing architecture
-
-Existing dependencies
-
-Current API integration
-
-Current errors
-
-Step 2 — Verify
-
-If an external API is involved:
-
-Read current official documentation.
-
-Verify the exact request.
-
-Verify the exact response.
-
-Step 3 — Plan
-
-State:
-
-Root cause
-
-Files that need modification
-
-Minimal implementation approach
-
-Step 4 — Implement
-
-Make focused changes.
-
-Step 5 — Test
-
-Verify:
-
-Build
-
-Runtime
-
-Browser console
-
-Network/WebSocket behavior
-
-UI behavior
-
-Step 6 — Report
-
-Report:
-
-What changed
-
-Why it changed
-
-What was tested
-
-Any remaining issue
-
-Which milestone is now complete
-
-Anti-Patterns
-
-Never do these:
-
-❌ Guess Deriv symbols
-❌ Use fake market prices
-❌ Hide API errors
-❌ Disable React Strict Mode to hide bugs
-❌ Rewrite the whole application for a small bug
-❌ Add dependencies without a reason
-❌ Put all API logic inside ChartSection
-❌ Create duplicate WebSocket connections unnecessarily
-❌ Claim a milestone is complete without testing
-❌ Assume a WebSocket request succeeded because send() executed
-❌ Assume an order succeeded because the request was sent
-❌ Expose secrets in frontend code
-❌ Use outdated API documentation without verification
-
-Definition of Done
-
-A feature is DONE only when:
-
-The implementation works.
-
-The implementation uses real data where required.
-
-Errors are handled.
-
-Cleanup is correct.
-
-The UI behaves correctly.
-
-Existing functionality is not unnecessarily broken.
-
-The implementation follows the current architecture.
-
-The relevant milestone acceptance criteria are satisfied.
-
-If something cannot be verified, explicitly say:
-
-NOT VERIFIED
-
-Do not claim success without evidence.
-
-Current Priority
-
-🔴 CURRENT MILESTONE: 1
-
-Get one real Deriv chart running with Lightweight Charts.
-
-Do not move to:
-
-dynamic symbols
-
-watchlist
-
-timeframe switching
-
-strategy tools
-
-trading
-
-until Milestone 1 is working reliably.
-
-The immediate target is:
-
-ONE REAL DERIV SYMBOL
-↓
-REAL HISTORICAL OHLC
-↓
-LIGHTWEIGHT CHART
-↓
-VISIBLE CANDLESTICKS
+Maintain standard separation of concerns:

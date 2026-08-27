@@ -22,24 +22,47 @@ export default function ChartSection({ symbol, symbolInfo }) {
     useEffect(() => {
         const container = containerRef.current;
         if (!container) return undefined;
-        const chart = createChart(container, {
-            width: container.clientWidth, height: container.clientHeight,
-            layout: { background: { color: '#0D0D0D' }, textColor: '#A8A8A0' },
-            grid: { vertLines: { color: '#1B1812' }, horzLines: { color: '#1B1812' } },
-            crosshair: { vertLine: { color: '#D4AF37', labelBackgroundColor: '#151515' }, horzLine: { color: '#D4AF37', labelBackgroundColor: '#151515' } },
-            rightPriceScale: { borderColor: '#29251B' },
-            timeScale: { borderColor: '#29251B', timeVisible: true, secondsVisible: false },
-        });
-        const series = chart.addSeries(CandlestickSeries, { upColor: '#10B981', downColor: '#EF4444', borderUpColor: '#10B981', borderDownColor: '#EF4444', wickUpColor: '#10B981', wickDownColor: '#EF4444' });
-        chartRef.current = chart;
-        seriesRef.current = series;
-        const resizeObserver = new ResizeObserver(() => {
-            requestAnimationFrame(() => chart.resize(container.clientWidth, container.clientHeight));
-        });
-        resizeObserver.observe(container);
+        let resizeObserver = null;
+        let chart = null;
+        let series = null;
+        let cancelled = false;
+
+        const tryInit = () => {
+            if (cancelled) return;
+            const width = container.clientWidth;
+            const height = container.clientHeight;
+            if (width > 0 && height > 0) {
+                requestAnimationFrame(() => {
+                    if (cancelled) return;
+                    chart = createChart(container, {
+                        width, height,
+                        layout: { background: { color: '#0D0D0D' }, textColor: '#A8A8A0' },
+                        grid: { vertLines: { color: '#1B1812' }, horzLines: { color: '#1B1812' } },
+                        crosshair: { vertLine: { color: '#D4AF37', labelBackgroundColor: '#151515' }, horzLine: { color: '#D4AF37', labelBackgroundColor: '#151515' } },
+                        rightPriceScale: { borderColor: '#29251B' },
+                        timeScale: { borderColor: '#29251B', timeVisible: true, secondsVisible: false },
+                    });
+                    series = chart.addSeries(CandlestickSeries, { upColor: '#10B981', downColor: '#EF4444', borderUpColor: '#10B981', borderDownColor: '#EF4444', wickUpColor: '#10B981', wickDownColor: '#EF4444' });
+                    chartRef.current = chart;
+                    seriesRef.current = series;
+
+                    resizeObserver = new ResizeObserver(() => {
+                        requestAnimationFrame(() => chart.resize(container.clientWidth, container.clientHeight));
+                    });
+                    resizeObserver.observe(container);
+                });
+            } else {
+                // Retry after a short delay to wait for layout to settle
+                setTimeout(tryInit, 50);
+            }
+        };
+
+        tryInit();
+
         return () => {
-            resizeObserver.disconnect();
-            chart.remove();
+            cancelled = true;
+            if (resizeObserver) try { resizeObserver.disconnect(); } catch (e) { }
+            if (chart) try { chart.remove(); } catch (e) { }
             chartRef.current = null;
             seriesRef.current = null;
         };
@@ -52,8 +75,10 @@ export default function ChartSection({ symbol, symbolInfo }) {
     }, []);
 
     const handleHistory = useCallback((candles) => {
-        seriesRef.current?.setData(candles);
-        chartRef.current?.timeScale().fitContent();
+        requestAnimationFrame(() => {
+            seriesRef.current?.setData(candles);
+            chartRef.current?.timeScale().fitContent();
+        });
         currentCandleRef.current = candles.at(-1);
         setPrice(candles.at(-1).close);
     }, []);
@@ -93,7 +118,7 @@ export default function ChartSection({ symbol, symbolInfo }) {
                 </div>
             </div>
             {error && <div className="border-b border-[#EF4444]/20 bg-[#EF4444]/5 px-4 py-2 text-xs text-[#EF4444]">{error}</div>}
-            <div className="relative min-h-0 w-full flex-1">
+            <div className="relative w-full flex-1 min-h-[400px]">
                 <div ref={containerRef} className="h-full w-full" />
                 {status === 'loading' && (
                     <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center bg-[#0D0D0D]/80 backdrop-blur-xs">

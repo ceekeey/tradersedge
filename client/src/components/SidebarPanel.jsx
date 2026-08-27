@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { TrendingUp, Bell, CheckSquare, Plus, X, Shield, ChevronLeft, ChevronRight } from 'lucide-react';
 
 export default function SidebarPanel({
@@ -14,7 +14,27 @@ export default function SidebarPanel({
     error = null,
 }) {
     const [rightTab, setRightTab] = useState('watchlist');
-    const availableSymbols = symbols.filter((item) => !watchlist.some((watched) => watched.symbol === item.symbol));
+    const STORAGE_KEY = 'traders_edge_watchlist';
+
+    const [watchlistSymbols, setWatchlistSymbols] = useState(() => {
+        try {
+            const saved = localStorage.getItem(STORAGE_KEY);
+            if (saved) return JSON.parse(saved);
+        } catch (e) {
+            // ignore
+        }
+        return watchlist;
+    });
+
+    useEffect(() => {
+        try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(watchlistSymbols));
+        } catch (e) {
+            // ignore quota errors
+        }
+    }, [watchlistSymbols]);
+
+    const availableSymbols = symbols.filter((item) => !watchlistSymbols.some((watched) => watched.symbol === item.symbol));
     const formatPrice = (price, pipSize) => {
         if (!Number.isFinite(price)) return 'Loading…';
         const decimals = Number.isFinite(Number(pipSize)) ? Math.max(0, Math.min(10, Math.round(-Math.log10(Number(pipSize))))) : undefined;
@@ -32,6 +52,21 @@ export default function SidebarPanel({
         setChecklist((prev) =>
             prev.map((item) => (item.id === id ? { ...item, checked: !item.checked } : item))
         );
+    };
+
+    const handleAddSymbol = (symbol) => {
+        const item = symbols.find((s) => s.symbol === symbol);
+        if (!item) return;
+        setWatchlistSymbols((prev) => {
+            if (prev.some((p) => p.symbol === symbol)) return prev;
+            return [...prev, item];
+        });
+        onAddSymbol(symbol);
+    };
+
+    const handleRemoveSymbol = (symbol) => {
+        setWatchlistSymbols((prev) => prev.filter((p) => p.symbol !== symbol));
+        onRemoveSymbol(symbol);
     };
 
     // Collapsed Rail View
@@ -101,13 +136,12 @@ export default function SidebarPanel({
                                 key={tab.id}
                                 onClick={() => setRightTab(tab.id)}
                                 title={tab.label}
-                                className={`flex flex-1 items-center justify-center gap-1 whitespace-nowrap rounded-lg px-1.5 py-1 text-[11px] font-semibold transition ${isActive
+                                className={`flex flex-1 justify-center py-2 whitespace-nowrap rounded-lg px-1.5 transition ${isActive
                                     ? 'bg-[#151515] text-[#D4AF37] border border-[#D4AF37]/30'
                                     : 'text-[#A8A8A0] hover:bg-[#151515]/50 hover:text-[#F5F5F0]'
                                     }`}
                             >
-                                <Icon className="h-3.5 w-3.5 shrink-0" />
-                                <span className="hidden sm:inline md:hidden xl:inline">{tab.label}</span>
+                                <Icon className="h-4 w-4 shrink-0" />
                             </button>
                         );
                     })}
@@ -134,7 +168,8 @@ export default function SidebarPanel({
                                 defaultValue=""
                                 disabled={!availableSymbols.length}
                                 onChange={(event) => {
-                                    if (event.target.value) onAddSymbol(event.target.value);
+                                    const val = event.target.value;
+                                    if (val) handleAddSymbol(val);
                                     event.target.value = '';
                                 }}
                                 className="min-w-0 flex-1 rounded-lg border border-[#29251B] bg-[#151515] px-2 py-1.5 text-[11px] text-[#F5F5F0] focus:border-[#D4AF37] focus:outline-none disabled:opacity-60"
@@ -145,7 +180,7 @@ export default function SidebarPanel({
                         </div>
                         {error && <p className="rounded-lg border border-red-500/30 bg-red-500/5 p-2 text-[11px] text-red-400">{error}</p>}
                         {!error && !watchlist.length && status !== 'loading' && <p className="rounded-lg border border-[#29251B] bg-[#151515] p-3 text-xs text-[#A8A8A0]">Add a supported Deriv market to begin watching live prices.</p>}
-                        {watchlist.map((item) => {
+                        {watchlistSymbols.map((item) => {
                             const isSelected = selectedSymbol === item.symbol;
                             const price = item.quote?.price;
                             const percentage = item.quote?.percentage;
@@ -173,7 +208,7 @@ export default function SidebarPanel({
                                             {Number.isFinite(percentage) ? `${isUp ? '+' : ''}${percentage.toFixed(3)}% tick` : 'Awaiting tick'}
                                         </div>
                                     </div>
-                                    <button onClick={(event) => { event.stopPropagation(); onRemoveSymbol(item.symbol); }} aria-label={`Remove ${item.displayName} from watchlist`} title="Remove from watchlist" className="rounded p-1 text-[#6F6F68] hover:bg-red-500/10 hover:text-red-400"><X className="h-3.5 w-3.5" /></button>
+                                    <button onClick={(event) => { event.stopPropagation(); handleRemoveSymbol(item.symbol); }} aria-label={`Remove ${item.displayName} from watchlist`} title="Remove from watchlist" className="rounded p-1 text-[#6F6F68] hover:bg-red-500/10 hover:text-red-400"><X className="h-3.5 w-3.5" /></button>
                                 </div>
                             );
                         })}
