@@ -1,0 +1,130 @@
+@import "tailwindcss";
+
+:root {
+  color: #0f172a;
+  background-color: #f8fafc;
+  font-family: Inter, "Segoe UI", sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+:root {
+  /* Design System tokens (from docs/design-system.md) */
+  --app-bg: #070707; /* Background */
+  --surface: #0d0d0d; /* Primary surface */
+  --elevated-surface: #151515; /* Elevated surface */
+  --border: #29251b; /* Primary border */
+  --gold: #d4af37; /* Primary brand gold */
+  --gold-hover: #e5c76b; /* Light gold */
+  --text-primary: #f5f5f0; /* Primary text */
+  --text-muted: #6f6f68; /* Muted text */
+}
+
+/* Custom Dark Gold Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #070707;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #29251b;
+  border-radius: 9999px;
+  border: 2px solid #070707;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #d4af37;
+}
+
+/* Firefox Support */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #29251b #070707;
+}
+
+/* Simple utility helpers that map design tokens into usable classes */
+.bg-app-bg {
+  background-color: var(--app-bg);
+}
+.bg-surface {
+  background-color: var(--surface);
+}
+.bg-elevated {
+  background-color: var(--elevated-surface);
+}
+.border-primary {
+  border-color: var(--border);
+}
+.text-primary {
+  color: var(--text-primary);
+}
+.text-muted {
+  color: var(--text-muted);
+}
+.text-gold {
+  color: var(--gold);
+}
+.text-gold-hover:hover {
+  color: var(--gold-hover);
+}
+.bg-gold {
+  background-color: var(--gold);
+}
+.bg-gold-hover:hover {
+  background-color: var(--gold-hover);
+}
+.btn-primary {
+  background-color: var(--gold);
+  color: var(--app-bg);
+}
+.btn-primary:hover {
+  background-color: var(--gold-hover);
+}
+.card-surface {
+  background-color: var(--elevated-surface);
+  border: 1px solid var(--border);
+}
+.focus-gold:focus {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+.muted-divider {
+  background-color: var(--border);
+}
+.accent-dot {
+  background-color: var(--gold);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: #f8fafc;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  text-decoration: none;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
