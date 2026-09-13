@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { Layers, Clock, ListFilter, ChevronDown, ChevronUp } from 'lucide-react';
 
-export default function TradePanel({ isCollapsed = false, onToggle = () => {} }) {
+export default function TradePanel({ isCollapsed = false, onToggle = () => { } }) {
     const [bottomTab, setBottomTab] = useState('positions');
 
-    const containerHeightClass = isCollapsed ? 'h-9' : 'h-36';
+    const containerHeightClass = isCollapsed ? 'h-9' : 'h-44';
 
     return (
         <div className={`flex ${containerHeightClass} flex-col overflow-hidden rounded-2xl border border-[#29251B] bg-[#0D0D0D] transition-all duration-300`}>

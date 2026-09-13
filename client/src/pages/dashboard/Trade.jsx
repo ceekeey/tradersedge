@@ -27,21 +27,20 @@ export default function Trade() {
         triggerResize();
     }, [triggerResize]);
 
-    // Keep the terminal dense: the chart owns 80%+ of the desktop grid while
-    // the sidebar remains available as a compact utility panel.
-    const leftCols = isSidebarCollapsed ? 'xl:col-span-11' : 'xl:col-span-10';
-    const rightCols = isSidebarCollapsed ? 'xl:col-span-1' : 'xl:col-span-2';
-
+    // Use a responsive flex layout: stack on mobile, row on xl. Main area grows
+    // and sidebar uses a fixed width when expanded (w-72 ≈ 288px) and compact
+    // width when collapsed (w-12 ≈ 48px). This avoids mixing grid columns
+    // and max-widths which caused conflicting constraints.
     return (
-        <div className="grid h-[calc(100vh-6rem)] w-full grid-cols-1 gap-4 overflow-hidden xl:grid-cols-12">
+        <div className="flex h-[calc(100vh-6rem)] w-full flex-col gap-4 overflow-hidden xl:flex-row">
             {/* Left & Center: Chart (Top) + Orders/Positions (Bottom) */}
-            <div className={`flex h-full min-w-0 flex-col gap-3 overflow-hidden transition-all duration-300 ${leftCols}`}>
+            <div className="flex flex-1 min-h-0 min-w-0 flex-col gap-3 overflow-hidden transition-all duration-300">
                 <ChartSection symbol={marketData.selectedSymbol} symbolInfo={selectedSymbolInfo} />
                 <TradePanel isCollapsed={isBottomCollapsed} onToggle={toggleBottom} />
             </div>
 
             {/* Right: Watchlist / Alerts / Trade Plan */}
-            <div className={`h-full min-w-0 overflow-hidden transition-all duration-300 xl:justify-self-end ${rightCols} ${isSidebarCollapsed ? 'xl:w-12' : 'xl:w-full xl:max-w-72'}`}>
+            <div className={`h-full min-w-0 overflow-hidden transition-all duration-300 flex-shrink-0 ${isSidebarCollapsed ? 'w-12' : 'w-full xl:w-[300px]'}`}>
                 <SidebarPanel isCollapsed={isSidebarCollapsed} onToggle={toggleSidebar} symbols={marketData.symbols} watchlist={marketData.watchlist} selectedSymbol={marketData.selectedSymbol} onSelectSymbol={marketData.setSelectedSymbol} onAddSymbol={marketData.addToWatchlist} onRemoveSymbol={marketData.removeFromWatchlist} status={marketData.status} error={marketData.error} />
             </div>
         </div>

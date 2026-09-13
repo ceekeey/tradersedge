@@ -41,58 +41,77 @@ export default function ChartSection({ symbol, symbolInfo }) {
         let series = null;
         let cancelled = false;
 
-        const tryInit = () => {
+        const init = () => {
             if (cancelled) return;
-            const width = container.clientWidth;
-            const height = container.clientHeight;
-            if (width > 0 && height > 0) {
-                requestAnimationFrame(() => {
-                    if (cancelled) return;
-                    chart = createChart(container, {
-                        width,
-                        height,
-                        layout: { background: { color: '#0D0D0D' }, textColor: '#A8A8A0' },
-                        grid: { vertLines: { color: '#1B1812' }, horzLines: { color: '#1B1812' } },
-                        crosshair: {
-                            vertLine: { color: '#D4AF37', labelBackgroundColor: '#151515' },
-                            horzLine: { color: '#D4AF37', labelBackgroundColor: '#151515' },
-                        },
-                        rightPriceScale: { borderColor: '#29251B' },
-                        timeScale: { borderColor: '#29251B', timeVisible: true, secondsVisible: false },
-                    });
+            const cssWidth = container.clientWidth;
+            const cssHeight = container.clientHeight;
+            if (cssWidth <= 0 || cssHeight <= 0) return;
 
-                    series = chart.addSeries(CandlestickSeries, {
-                        upColor: '#10B981',
-                        downColor: '#EF4444',
-                        borderUpColor: '#10B981',
-                        borderDownColor: '#EF4444',
-                        wickUpColor: '#10B981',
-                        wickDownColor: '#EF4444',
-                    });
+            chart = createChart(container, {
+                width: cssWidth,
+                height: cssHeight,
+                layout: { background: { color: '#0D0D0D' }, textColor: '#A8A8A0' },
+                grid: { vertLines: { color: '#1B1812' }, horzLines: { color: '#1B1812' } },
+                crosshair: {
+                    vertLine: { color: '#D4AF37', labelBackgroundColor: '#151515' },
+                    horzLine: { color: '#D4AF37', labelBackgroundColor: '#151515' },
+                },
+                rightPriceScale: { borderColor: '#29251B' },
+                timeScale: { borderColor: '#29251B', timeVisible: true, secondsVisible: false },
+            });
 
-                    chartRef.current = chart;
-                    seriesRef.current = series;
+            series = chart.addSeries(CandlestickSeries, {
+                upColor: '#10B981',
+                downColor: '#EF4444',
+                borderUpColor: '#10B981',
+                borderDownColor: '#EF4444',
+                wickUpColor: '#10B981',
+                wickDownColor: '#EF4444',
+            });
 
-                    chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
-                        requestAnimationFrame(drawOverlayCanvas);
-                    });
+            chartRef.current = chart;
+            seriesRef.current = series;
 
-                    resizeObserver = new ResizeObserver(() => {
-                        requestAnimationFrame(() => {
-                            if (container.clientWidth > 0 && container.clientHeight > 0) {
-                                chart.resize(container.clientWidth, container.clientHeight);
-                                drawOverlayCanvas();
-                            }
-                        });
-                    });
-                    resizeObserver.observe(container);
-                });
-            } else {
-                setTimeout(tryInit, 50);
-            }
+            chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+                requestAnimationFrame(() => drawOverlayCanvas());
+            });
+
+            const resizeHandler = () => {
+                if (cancelled) return;
+                const w = container.clientWidth;
+                const h = container.clientHeight;
+                if (w <= 0 || h <= 0) return;
+
+                // Resize chart first
+                try { chart.resize(w, h); } catch (e) { }
+
+                // Resize overlay canvas to match the container (CSS px -> backing store)
+                const canvas = overlayCanvasRef.current;
+                if (canvas) {
+                    const dpr = window.devicePixelRatio || 1;
+                    canvas.style.width = `${w}px`;
+                    canvas.style.height = `${h}px`;
+                    canvas.width = Math.max(1, Math.floor(w * dpr));
+                    canvas.height = Math.max(1, Math.floor(h * dpr));
+                    const ctx = canvas.getContext('2d');
+                    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+                    ctx.clearRect(0, 0, w, h);
+                }
+
+                // Redraw drawings
+                drawOverlayCanvas();
+            };
+
+            resizeObserver = new ResizeObserver(() => {
+                requestAnimationFrame(resizeHandler);
+            });
+            resizeObserver.observe(container);
+
+            // initial sync
+            requestAnimationFrame(resizeHandler);
         };
 
-        tryInit();
+        init();
 
         return () => {
             cancelled = true;
@@ -111,7 +130,12 @@ export default function ChartSection({ symbol, symbolInfo }) {
         if (!canvas || !chart || !series) return;
 
         const ctx = canvas.getContext('2d');
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const dpr = window.devicePixelRatio || 1;
+        const cssWidth = canvas.clientWidth;
+        const cssHeight = canvas.clientHeight;
+        // Set backing scale and clear in CSS pixel coordinates
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, cssWidth, cssHeight);
 
         const timeScale = chart.timeScale();
 
@@ -231,15 +255,7 @@ export default function ChartSection({ symbol, symbolInfo }) {
         drawOverlayCanvas();
     }, [drawOverlayCanvas, drawings, activeStart, mousePos]);
 
-    useEffect(() => {
-        const canvas = overlayCanvasRef.current;
-        const container = containerRef.current;
-        if (!canvas || !container) return;
 
-        canvas.width = container.clientWidth;
-        canvas.height = container.clientHeight;
-        drawOverlayCanvas();
-    }, [drawOverlayCanvas]);
 
     // Canvas Mouse Click Events
     const handleCanvasClick = (e) => {
@@ -432,14 +448,14 @@ export default function ChartSection({ symbol, symbolInfo }) {
             {error && <div className="border-b border-[#EF4444]/20 bg-[#EF4444]/5 px-4 py-2 text-xs text-[#EF4444]">{error}</div>}
 
             {/* Chart + Canvas Overlay Layer */}
-            <div className="relative w-full flex-1 min-h-[400px]">
+            <div className="relative w-full flex-1 min-h-0">
                 <div ref={containerRef} className="h-full w-full" />
 
                 <canvas
                     ref={overlayCanvasRef}
                     onClick={handleCanvasClick}
                     onMouseMove={handleCanvasMouseMove}
-                    className={`absolute inset-0 z-10 ${activeTool !== 'select' ? 'cursor-crosshair' : 'pointer-events-none'}`}
+                    className={`absolute inset-0 z-10 ${activeTool !== 'select' ? 'cursor-crosshair pointer-events-auto' : 'pointer-events-none'}`}
                 />
 
                 {status === 'loading' && (
