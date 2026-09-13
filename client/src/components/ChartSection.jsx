@@ -4,6 +4,13 @@ import { TrendingUp, RotateCcw, Trash2, Percent, ArrowUpRight, ArrowDownRight, M
 import { DEFAULT_TIMEFRAME, getTimeframe } from '../constants/chartTimeframes';
 import useDerivCandles from '../hooks/useDerivCandles';
 import TimeframeSelector from './TimeframeSelector';
+import {
+    createDrawingId,
+    hitTestDrawings,
+    renderDrawingScene,
+    screenToLogicalPoint,
+    translateDrawing,
+} from './chart/DrawingEngine';
 
 const formatPrice = (price, pipSize) => {
     if (!Number.isFinite(price)) return '--';
@@ -13,35 +20,102 @@ const formatPrice = (price, pipSize) => {
     return decimals === undefined ? String(price) : price.toFixed(decimals);
 };
 
-const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0];
-
 export default function ChartSection({ symbol, symbolInfo }) {
     const containerRef = useRef(null);
     const overlayCanvasRef = useRef(null);
     const chartRef = useRef(null);
     const seriesRef = useRef(null);
     const currentCandleRef = useRef(null);
+    const drawingsRef = useRef([]);
+    const selectedDrawingIdRef = useRef(null);
+    const activeToolRef = useRef('select');
+    const activeStartRef = useRef(null);
+    const previewRef = useRef(null);
+    const dragStateRef = useRef(null);
 
     const [price, setPrice] = useState(null);
     const [selectedTimeframe, setSelectedTimeframe] = useState(DEFAULT_TIMEFRAME);
     const selectedGranularity = getTimeframe(selectedTimeframe).granularity;
 
-    // Active Drawing Tool: 'select' | 'trendline' | 'fib' | 'long' | 'short'
     const [activeTool, setActiveTool] = useState('select');
-    const [drawings, setDrawings] = useState([]); // [{ id, type, start: {time, price}, end: {time, price} }]
-    const [activeStart, setActiveStart] = useState(null); // First click point
-    const [mousePos, setMousePos] = useState(null);
+    const [drawings, setDrawings] = useState([]);
+    const [selectedDrawingId, setSelectedDrawingId] = useState(null);
 
-    // 1. Initialize Lightweight Chart
+    const resetInteractionState = useCallback(() => {
+        activeStartRef.current = null;
+        previewRef.current = null;
+        dragStateRef.current = null;
+    }, []);
+
+    const redrawOverlayCanvas = useCallback(() => {
+        const canvas = overlayCanvasRef.current;
+        const chart = chartRef.current;
+        const series = seriesRef.current;
+        if (!canvas || !chart || !series) return;
+
+        const dpr = window.devicePixelRatio || 1;
+        const cssWidth = canvas.clientWidth || chart.clientWidth || 0;
+        const cssHeight = canvas.clientHeight || chart.clientHeight || 0;
+
+        if (!cssWidth || !cssHeight) return;
+
+        canvas.style.width = `${cssWidth}px`;
+        canvas.style.height = `${cssHeight}px`;
+        canvas.width = Math.max(1, Math.floor(cssWidth * dpr));
+        canvas.height = Math.max(1, Math.floor(cssHeight * dpr));
+
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+
+        renderDrawingScene({
+            ctx,
+            chart,
+            series,
+            drawings: drawingsRef.current,
+            selectedDrawingId: selectedDrawingIdRef.current,
+            preview: previewRef.current,
+        });
+    }, []);
+
+    const changeTool = useCallback((nextTool) => {
+        setActiveTool(nextTool);
+        activeToolRef.current = nextTool;
+        setSelectedDrawingId(null);
+        selectedDrawingIdRef.current = null;
+        resetInteractionState();
+        redrawOverlayCanvas();
+    }, [redrawOverlayCanvas, resetInteractionState]);
+
+    useEffect(() => {
+        drawingsRef.current = drawings;
+    }, [drawings]);
+
+    useEffect(() => {
+        selectedDrawingIdRef.current = selectedDrawingId;
+    }, [selectedDrawingId]);
+
+    useEffect(() => {
+        activeToolRef.current = activeTool;
+    }, [activeTool]);
+
+    useEffect(() => {
+        if (activeTool !== 'select') {
+            setSelectedDrawingId(null);
+            selectedDrawingIdRef.current = null;
+            resetInteractionState();
+        }
+    }, [activeTool, resetInteractionState]);
+
     useEffect(() => {
         const container = containerRef.current;
         if (!container) return undefined;
+
         let resizeObserver = null;
         let chart = null;
         let series = null;
         let cancelled = false;
 
-        const init = () => {
+        const initChart = () => {
             if (cancelled) return;
             const cssWidth = container.clientWidth;
             const cssHeight = container.clientHeight;
@@ -72,8 +146,14 @@ export default function ChartSection({ symbol, symbolInfo }) {
             chartRef.current = chart;
             seriesRef.current = series;
 
+            chart.subscribeClick((param) => {
+                if (activeToolRef.current !== 'select' || !param?.point || !chart || !series) return;
+                const hit = hitTestDrawings(drawingsRef.current, { x: param.point.x, y: param.point.y }, chart, series, 14);
+                setSelectedDrawingId(hit?.id ?? null);
+            });
+
             chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
-                requestAnimationFrame(() => drawOverlayCanvas());
+                requestAnimationFrame(() => redrawOverlayCanvas());
             });
 
             const resizeHandler = () => {
@@ -82,10 +162,10 @@ export default function ChartSection({ symbol, symbolInfo }) {
                 const h = container.clientHeight;
                 if (w <= 0 || h <= 0) return;
 
-                // Resize chart first
-                try { chart.resize(w, h); } catch (e) { }
+                try { chart.resize(w, h); } catch (error) {
+                    console.warn('Chart resize error:', error);
+                }
 
-                // Resize overlay canvas to match the container (CSS px -> backing store)
                 const canvas = overlayCanvasRef.current;
                 if (canvas) {
                     const dpr = window.devicePixelRatio || 1;
@@ -93,204 +173,163 @@ export default function ChartSection({ symbol, symbolInfo }) {
                     canvas.style.height = `${h}px`;
                     canvas.width = Math.max(1, Math.floor(w * dpr));
                     canvas.height = Math.max(1, Math.floor(h * dpr));
-                    const ctx = canvas.getContext('2d');
-                    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-                    ctx.clearRect(0, 0, w, h);
+                    const context = canvas.getContext('2d');
+                    if (context) {
+                        context.setTransform(dpr, 0, 0, dpr, 0, 0);
+                        context.clearRect(0, 0, w, h);
+                    }
                 }
 
-                // Redraw drawings
-                drawOverlayCanvas();
+                requestAnimationFrame(() => redrawOverlayCanvas());
             };
 
             resizeObserver = new ResizeObserver(() => {
                 requestAnimationFrame(resizeHandler);
             });
             resizeObserver.observe(container);
-
-            // initial sync
             requestAnimationFrame(resizeHandler);
         };
 
-        init();
+        initChart();
 
         return () => {
             cancelled = true;
-            if (resizeObserver) try { resizeObserver.disconnect(); } catch (e) { }
-            if (chart) try { chart.remove(); } catch (e) { }
+            if (resizeObserver) {
+                try { resizeObserver.disconnect(); } catch (error) {
+                    console.warn('Resize observer cleanup warning:', error);
+                }
+            }
+            if (chart) {
+                try { chart.remove(); } catch (error) {
+                    console.warn('Chart cleanup warning:', error);
+                }
+            }
             chartRef.current = null;
             seriesRef.current = null;
         };
-    }, []);
+    }, [redrawOverlayCanvas]);
 
-    // 2. Canvas Drawing Engine
-    const drawOverlayCanvas = useCallback(() => {
-        const canvas = overlayCanvasRef.current;
-        const chart = chartRef.current;
-        const series = seriesRef.current;
-        if (!canvas || !chart || !series) return;
+    const handleCanvasPointerDown = (event) => {
+        if (!chartRef.current || !seriesRef.current) return;
 
-        const ctx = canvas.getContext('2d');
-        const dpr = window.devicePixelRatio || 1;
-        const cssWidth = canvas.clientWidth;
-        const cssHeight = canvas.clientHeight;
-        // Set backing scale and clear in CSS pixel coordinates
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        ctx.clearRect(0, 0, cssWidth, cssHeight);
+        const rect = overlayCanvasRef.current?.getBoundingClientRect();
+        if (!rect) return;
 
-        const timeScale = chart.timeScale();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
 
-        const toCoords = (point) => {
-            if (!point) return null;
-            const x = timeScale.timeToCoordinate(point.time);
-            const y = series.priceToCoordinate(point.price);
-            if (x === null || y === null) return null;
-            return { x, y };
-        };
+        if (activeToolRef.current === 'select') {
+            const currentDrawings = drawingsRef.current;
+            const hit = hitTestDrawings(currentDrawings, { x, y }, chartRef.current, seriesRef.current, 14);
 
-        const drawTool = (tool) => {
-            const start = toCoords(tool.start);
-            const end = toCoords(tool.end);
-            if (!start || !end) return;
-
-            if (tool.type === 'trendline') {
-                ctx.strokeStyle = '#D4AF37';
-                ctx.lineWidth = 2;
-                ctx.setLineDash([]);
-                ctx.beginPath();
-                ctx.moveTo(start.x, start.y);
-                ctx.lineTo(end.x, end.y);
-                ctx.stroke();
-
-                ctx.fillStyle = '#D4AF37';
-                ctx.beginPath();
-                ctx.arc(start.x, start.y, 3, 0, Math.PI * 2);
-                ctx.arc(end.x, end.y, 3, 0, Math.PI * 2);
-                ctx.fill();
-            } else if (tool.type === 'fib') {
-                const minX = Math.min(start.x, end.x);
-                const maxX = Math.max(start.x, end.x);
-                const priceDiff = tool.end.price - tool.start.price;
-
-                FIB_LEVELS.forEach((lvl) => {
-                    const priceAtLvl = tool.start.price + priceDiff * lvl;
-                    const y = series.priceToCoordinate(priceAtLvl);
-                    if (y === null) return;
-
-                    ctx.strokeStyle = lvl === 0.5 || lvl === 0.618 ? '#D4AF37' : 'rgba(245, 245, 240, 0.4)';
-                    ctx.lineWidth = lvl === 0.5 || lvl === 0.618 ? 1.5 : 1;
-                    ctx.setLineDash([]);
-
-                    ctx.beginPath();
-                    ctx.moveTo(minX, y);
-                    ctx.lineTo(maxX, y);
-                    ctx.stroke();
-
-                    // Text Label
-                    ctx.fillStyle = '#A8A8A0';
-                    ctx.font = '10px monospace';
-                    ctx.fillText(`${(lvl * 100).toFixed(1)}% (${priceAtLvl.toFixed(2)})`, maxX + 5, y + 3);
-                });
-            } else if (tool.type === 'long' || tool.type === 'short') {
-                const minX = Math.min(start.x, end.x);
-                const maxX = Math.max(start.x, end.x);
-
-                const entryPrice = tool.start.price;
-                const targetPrice = tool.end.price;
-                const entryY = start.y;
-                const targetY = end.y;
-
-                // Stop loss auto-calculated symmetrically for initial draft
-                const riskDist = Math.abs(targetPrice - entryPrice);
-                const slPrice = tool.type === 'long' ? entryPrice - riskDist / 2 : entryPrice + riskDist / 2;
-                const slY = series.priceToCoordinate(slPrice);
-
-                if (slY !== null) {
-                    const isLong = tool.type === 'long';
-
-                    // Profit Box
-                    ctx.fillStyle = 'rgba(16, 185, 129, 0.15)';
-                    ctx.strokeStyle = '#10B981';
-                    const tpTop = Math.min(entryY, targetY);
-                    const tpHeight = Math.abs(entryY - targetY);
-                    ctx.fillRect(minX, tpTop, maxX - minX, tpHeight);
-                    ctx.strokeRect(minX, tpTop, maxX - minX, tpHeight);
-
-                    // Stop Box
-                    ctx.fillStyle = 'rgba(239, 68, 68, 0.15)';
-                    ctx.strokeStyle = '#EF4444';
-                    const slTop = Math.min(entryY, slY);
-                    const slHeight = Math.abs(entryY - slY);
-                    ctx.fillRect(minX, slTop, maxX - minX, slHeight);
-                    ctx.strokeRect(minX, slTop, maxX - minX, slHeight);
-
-                    // Risk / Reward Ratio Text
-                    const rr = (Math.abs(targetPrice - entryPrice) / Math.abs(entryPrice - slPrice)).toFixed(2);
-                    ctx.fillStyle = '#F5F5F0';
-                    ctx.font = 'bold 11px sans-serif';
-                    ctx.fillText(`R:R ${rr} (${isLong ? 'LONG' : 'SHORT'})`, minX + 6, entryY - 6);
-                }
+            if (hit) {
+                setSelectedDrawingId(hit.id);
+                selectedDrawingIdRef.current = hit.id;
+                dragStateRef.current = {
+                    drawingId: hit.id,
+                    pointerStart: { x, y },
+                    logicalStart: screenToLogicalPoint(x, y, chartRef.current, seriesRef.current),
+                    baseDrawing: hit,
+                };
+                event.currentTarget.setPointerCapture?.(event.pointerId);
+                return;
             }
-        };
 
-        // Render saved tools
-        drawings.forEach(drawTool);
-
-        // Render live preview tool
-        if (activeStart && mousePos) {
-            const timeScaleVal = chart.timeScale();
-            const currTime = timeScaleVal.coordinateToTime(mousePos.x);
-            const currPrice = series.coordinateToPrice(mousePos.y);
-
-            if (currTime !== null && currPrice !== null) {
-                drawTool({
-                    type: activeTool,
-                    start: activeStart,
-                    end: { time: currTime, price: currPrice },
-                });
-            }
+            setSelectedDrawingId(null);
+            selectedDrawingIdRef.current = null;
+            dragStateRef.current = null;
+            return;
         }
-    }, [drawings, activeStart, mousePos, activeTool]);
 
-    useEffect(() => {
-        drawOverlayCanvas();
-    }, [drawOverlayCanvas, drawings, activeStart, mousePos]);
+        const point = screenToLogicalPoint(x, y, chartRef.current, seriesRef.current);
+        if (!point) return;
 
+        if (!activeStartRef.current) {
+            activeStartRef.current = point;
+            previewRef.current = { tool: activeToolRef.current, start: point, current: point };
+            redrawOverlayCanvas();
+            return;
+        }
 
+        const nextDrawing = {
+            id: createDrawingId(),
+            type: activeToolRef.current,
+            start: activeStartRef.current,
+            end: point,
+        };
 
-    // Canvas Mouse Click Events
-    const handleCanvasClick = (e) => {
-        if (activeTool === 'select' || !chartRef.current || !seriesRef.current) return;
+        setDrawings((prev) => [...prev, nextDrawing]);
+        setSelectedDrawingId(nextDrawing.id);
+        selectedDrawingIdRef.current = nextDrawing.id;
+        activeStartRef.current = null;
+        previewRef.current = null;
+        setActiveTool('select');
+        activeToolRef.current = 'select';
+        redrawOverlayCanvas();
+    };
+
+    const handleCanvasPointerMove = (event) => {
+        if (!chartRef.current || !seriesRef.current || !overlayCanvasRef.current) return;
 
         const rect = overlayCanvasRef.current.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
 
-        const clickedTime = chartRef.current.timeScale().coordinateToTime(x);
-        const clickedPrice = seriesRef.current.coordinateToPrice(y);
+        if (activeToolRef.current !== 'select') {
+            if (!activeStartRef.current) return;
+            const point = screenToLogicalPoint(x, y, chartRef.current, seriesRef.current);
+            if (!point) return;
+            previewRef.current = { tool: activeToolRef.current, start: activeStartRef.current, current: point };
+            redrawOverlayCanvas();
+            return;
+        }
 
-        if (clickedTime === null || clickedPrice === null) return;
+        if (!dragStateRef.current) return;
 
-        const point = { time: clickedTime, price: clickedPrice };
+        const logicalPoint = screenToLogicalPoint(x, y, chartRef.current, seriesRef.current);
+        if (!logicalPoint) return;
 
-        if (!activeStart) {
-            setActiveStart(point);
-        } else {
-            setDrawings((prev) => [
-                ...prev,
-                { id: Date.now(), type: activeTool, start: activeStart, end: point },
-            ]);
-            setActiveStart(null);
-            setActiveTool('select'); // Auto reset to select mode after drawing
+        const deltaTime = logicalPoint.time - dragStateRef.current.logicalStart.time;
+        const deltaPrice = logicalPoint.price - dragStateRef.current.logicalStart.price;
+        const moved = translateDrawing(dragStateRef.current.baseDrawing, deltaTime, deltaPrice);
+
+        setDrawings((prev) => prev.map((drawing) => (drawing.id === moved.id ? moved : drawing)));
+        redrawOverlayCanvas();
+    };
+
+    const handleCanvasPointerUp = (event) => {
+        if (dragStateRef.current) {
+            dragStateRef.current = null;
+            event.currentTarget.releasePointerCapture?.(event.pointerId);
+        }
+
+        if (activeToolRef.current !== 'select' && activeStartRef.current) {
+            previewRef.current = null;
+            redrawOverlayCanvas();
         }
     };
 
-    const handleCanvasMouseMove = (e) => {
-        if (!activeStart) return;
-        const rect = overlayCanvasRef.current.getBoundingClientRect();
-        setMousePos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+    const handleCanvasPointerLeave = (event) => {
+        if (activeToolRef.current !== 'select' && activeStartRef.current) {
+            activeStartRef.current = null;
+            previewRef.current = null;
+            redrawOverlayCanvas();
+        }
+
+        if (dragStateRef.current) {
+            dragStateRef.current = null;
+            event.currentTarget.releasePointerCapture?.(event.pointerId);
+        }
     };
 
-    // Actions
+    const handleCanvasPointerCancel = (event) => {
+        activeStartRef.current = null;
+        previewRef.current = null;
+        dragStateRef.current = null;
+        event.currentTarget.releasePointerCapture?.(event.pointerId);
+        redrawOverlayCanvas();
+    };
+
     const handleResetView = () => {
         if (chartRef.current) {
             chartRef.current.timeScale().fitContent();
@@ -300,11 +339,14 @@ export default function ChartSection({ symbol, symbolInfo }) {
 
     const handleClearDrawings = () => {
         setDrawings([]);
-        setActiveStart(null);
+        setSelectedDrawingId(null);
+        selectedDrawingIdRef.current = null;
+        resetInteractionState();
         setActiveTool('select');
+        activeToolRef.current = 'select';
+        redrawOverlayCanvas();
     };
 
-    // WebSocket Handlers
     const handleStart = useCallback(() => {
         setPrice(null);
         seriesRef.current?.setData([]);
@@ -315,11 +357,11 @@ export default function ChartSection({ symbol, symbolInfo }) {
         requestAnimationFrame(() => {
             seriesRef.current?.setData(candles);
             chartRef.current?.timeScale().fitContent();
-            drawOverlayCanvas();
+            redrawOverlayCanvas();
         });
         currentCandleRef.current = candles.at(-1);
-        setPrice(candles.at(-1).close);
-    }, [drawOverlayCanvas]);
+        setPrice(candles.at(-1)?.close ?? null);
+    }, [redrawOverlayCanvas]);
 
     const handleTick = useCallback((tick) => {
         const quote = Number(tick.quote);
@@ -344,9 +386,10 @@ export default function ChartSection({ symbol, symbolInfo }) {
         onTick: handleTick,
     });
 
+    const overlayIsInteractive = activeTool !== 'select' || Boolean(selectedDrawingId);
+
     return (
         <div className="relative flex flex-1 flex-col overflow-hidden rounded-2xl border border-[#29251B] bg-[#0D0D0D]">
-            {/* Header Controls */}
             <div className="flex min-h-12 shrink-0 items-center justify-between gap-3 border-b border-[#29251B] px-4 py-2">
                 <div className="min-w-0">
                     <div className="truncate text-xs font-semibold text-[#F5F5F0]">
@@ -357,11 +400,9 @@ export default function ChartSection({ symbol, symbolInfo }) {
                     </div>
                 </div>
 
-                {/* Drawing Toolbar */}
                 <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-                    {/* Cursor Mode */}
                     <button
-                        onClick={() => { setActiveTool('select'); setActiveStart(null); }}
+                        onClick={() => changeTool('select')}
                         className={`rounded-lg border p-1.5 transition ${activeTool === 'select'
                             ? 'border-[#D4AF37] bg-[#D4AF37]/10 text-[#D4AF37]'
                             : 'border-[#29251B] bg-[#151515] text-[#A8A8A0] hover:text-[#F5F5F0]'}`}
@@ -370,9 +411,8 @@ export default function ChartSection({ symbol, symbolInfo }) {
                         <MousePointer className="h-3.5 w-3.5" />
                     </button>
 
-                    {/* Trendline */}
                     <button
-                        onClick={() => { setActiveTool('trendline'); setActiveStart(null); }}
+                        onClick={() => changeTool('trendline')}
                         className={`rounded-lg border p-1.5 transition ${activeTool === 'trendline'
                             ? 'border-[#D4AF37] bg-[#D4AF37]/10 text-[#D4AF37]'
                             : 'border-[#29251B] bg-[#151515] text-[#A8A8A0] hover:text-[#F5F5F0]'}`}
@@ -381,9 +421,8 @@ export default function ChartSection({ symbol, symbolInfo }) {
                         <TrendingUp className="h-3.5 w-3.5" />
                     </button>
 
-                    {/* Fibonacci Retracement */}
                     <button
-                        onClick={() => { setActiveTool('fib'); setActiveStart(null); }}
+                        onClick={() => changeTool('fib')}
                         className={`rounded-lg border p-1.5 transition ${activeTool === 'fib'
                             ? 'border-[#D4AF37] bg-[#D4AF37]/10 text-[#D4AF37]'
                             : 'border-[#29251B] bg-[#151515] text-[#A8A8A0] hover:text-[#F5F5F0]'}`}
@@ -392,9 +431,8 @@ export default function ChartSection({ symbol, symbolInfo }) {
                         <Percent className="h-3.5 w-3.5" />
                     </button>
 
-                    {/* Long Position (R:R) */}
                     <button
-                        onClick={() => { setActiveTool('long'); setActiveStart(null); }}
+                        onClick={() => changeTool('long')}
                         className={`rounded-lg border p-1.5 transition ${activeTool === 'long'
                             ? 'border-[#10B981] bg-[#10B981]/10 text-[#10B981]'
                             : 'border-[#29251B] bg-[#151515] text-[#A8A8A0] hover:text-[#F5F5F0]'}`}
@@ -403,9 +441,8 @@ export default function ChartSection({ symbol, symbolInfo }) {
                         <ArrowUpRight className="h-3.5 w-3.5" />
                     </button>
 
-                    {/* Short Position (R:R) */}
                     <button
-                        onClick={() => { setActiveTool('short'); setActiveStart(null); }}
+                        onClick={() => changeTool('short')}
                         className={`rounded-lg border p-1.5 transition ${activeTool === 'short'
                             ? 'border-[#EF4444] bg-[#EF4444]/10 text-[#EF4444]'
                             : 'border-[#29251B] bg-[#151515] text-[#A8A8A0] hover:text-[#F5F5F0]'}`}
@@ -416,7 +453,6 @@ export default function ChartSection({ symbol, symbolInfo }) {
 
                     <div className="mx-1 h-4 w-px bg-[#29251B]" />
 
-                    {/* Clear Drawings */}
                     {drawings.length > 0 && (
                         <button
                             onClick={handleClearDrawings}
@@ -427,7 +463,6 @@ export default function ChartSection({ symbol, symbolInfo }) {
                         </button>
                     )}
 
-                    {/* Reset Zoom */}
                     <button
                         onClick={handleResetView}
                         className="flex items-center gap-1 rounded-lg border border-[#29251B] bg-[#151515] px-2 py-1 text-[11px] font-medium text-[#A8A8A0] transition hover:border-[#D4AF37]/40 hover:text-[#F5F5F0]"
@@ -447,15 +482,17 @@ export default function ChartSection({ symbol, symbolInfo }) {
 
             {error && <div className="border-b border-[#EF4444]/20 bg-[#EF4444]/5 px-4 py-2 text-xs text-[#EF4444]">{error}</div>}
 
-            {/* Chart + Canvas Overlay Layer */}
             <div className="relative w-full flex-1 min-h-0">
                 <div ref={containerRef} className="h-full w-full" />
 
                 <canvas
                     ref={overlayCanvasRef}
-                    onClick={handleCanvasClick}
-                    onMouseMove={handleCanvasMouseMove}
-                    className={`absolute inset-0 z-10 ${activeTool !== 'select' ? 'cursor-crosshair pointer-events-auto' : 'pointer-events-none'}`}
+                    onPointerDown={handleCanvasPointerDown}
+                    onPointerMove={handleCanvasPointerMove}
+                    onPointerUp={handleCanvasPointerUp}
+                    onPointerCancel={handleCanvasPointerCancel}
+                    onPointerLeave={handleCanvasPointerLeave}
+                    className={`absolute inset-0 z-10 ${overlayIsInteractive ? 'pointer-events-auto' : 'pointer-events-none'} ${activeTool !== 'select' ? 'cursor-crosshair' : 'cursor-default'}`}
                 />
 
                 {status === 'loading' && (
